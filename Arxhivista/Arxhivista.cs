@@ -1,4 +1,5 @@
-﻿using System;
+﻿using LibGit2Sharp;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -41,6 +42,17 @@ namespace Arxhivista
             
         }
 
+        private void OnCreated(object sender, FileSystemEventArgs e)
+        {
+            LogEvent("Create " + e.FullPath);
+            if (e.FullPath.EndsWith(".docx") || e.FullPath.EndsWith(".pptx") || e.FullPath.EndsWith(".xlsx"))
+            {
+                CreateOfficeDocumentRepository(e.Name);
+                CopyDocumentContentToRepository(e.FullPath, e.Name);
+                UpdateGitRepository(e.Name);
+            }
+        }
+
         private void OnRenamed(object sender, RenamedEventArgs e)
         {
             LogEvent("Rename " + e.FullPath + " " + e.OldName);
@@ -48,6 +60,7 @@ namespace Arxhivista
             {
                 CreateOfficeDocumentRepository(e.Name);
                 CopyDocumentContentToRepository(e.FullPath, e.Name);
+                UpdateGitRepository(e.Name);
             }
         }
 
@@ -82,6 +95,15 @@ namespace Arxhivista
             }
         }
 
+        private void UpdateGitRepository(string name)
+        {
+            string archivePath = GetRepositoryRootPath() + name;
+            GitInit(archivePath);
+            GitAdd(archivePath);
+            GitCommit(archivePath);
+            GitTag(archivePath);
+        }
+
         private string GetRepositoryRootPath()
         {
             return appDataPath + "\\Arxhivista\\";
@@ -103,12 +125,11 @@ namespace Arxhivista
             watcher.NotifyFilter = NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Attributes;
             watcher.IncludeSubdirectories = true;
             watcher.Renamed += new RenamedEventHandler(OnRenamed);
-
+            watcher.Created += new FileSystemEventHandler(OnCreated);
             watcher.EnableRaisingEvents = true;
 
             definedWatchersList.Add(watcher);
         }
-
 
         private void CopyDocumentContentToRepository(string fullPath, string name)
         {
@@ -138,6 +159,42 @@ namespace Arxhivista
                 LogEvent(ioe.Message);
             }
             File.Delete(fullPath + ".arxhivista-tmp");
+        }
+
+        private void GitInit(string repositoryPath)
+        {
+            if (!Directory.Exists(repositoryPath + "\\.git"))
+            {
+                Repository.Init(repositoryPath);
+            }
+        }
+
+        private void GitAdd(string repositoryPath)
+        {
+            using(var repo = new Repository(repositoryPath))
+            {
+                Commands.Stage(repo, "*");
+            }
+        }
+
+        private void GitCommit(string repositoryPath)
+        {
+            using (var repo = new Repository(repositoryPath))
+            {
+                Signature author = new Signature("Arxhivista", "arxhivista@home.local", DateTime.Now);
+                Signature committer = author;
+                string message = string.Format("Snapshot created on {0}", DateTime.Now.ToString("yyyy-MM-dd, HH:mm:ss"));
+                Commit commit = repo.Commit(message, author, committer);
+            }
+        }
+
+        private void GitTag(string repositoryPath)
+        {
+            using (var repo = new Repository(repositoryPath))
+            {
+                string tag = DateTime.Now.ToString("yyyyMMddHHmmss");
+                Tag t = repo.ApplyTag(tag);
+            }
         }
     }
 }
