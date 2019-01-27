@@ -66,6 +66,7 @@
     <Compile Include="ArxhivistaInstaller.Designer.cs">
       <DependentUpon>ArxhivistaInstaller.cs</DependentUpon>
     </Compile>
+    <Compile Include="GitRepository.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

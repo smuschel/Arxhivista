@@ -1,20 +1,25 @@
-﻿using LibGit2Sharp;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.ServiceProcess;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Arxhivista
 {
     public partial class Arxhivista : ServiceBase
     {
+        private const string APP_DATA = "APPDATA";
+        private const string USER_PROFILE = "USERPROFILE";
+        private const string DOCUMENTS_FOLDER_NAME = "Documents";
+
+        private const string DOCX_EXTENSION = "docx";
+        private const string PPTX_EXTENSION = "pptx";
+        private const string XLSX_EXTENSION = "xlsx";
+        private const string OFFICE_TEMP_PREFIX = "~$";
+
+        private const string ARXHIVISTA_TEMPFILE_POSTFIX = ".arxhivsta-tmp";
+
         public const string SERVICE_NAME = "Arxhivista";
         protected string appDataPath;
         protected string userProfileDocumentsPath;
@@ -28,13 +33,13 @@ namespace Arxhivista
 
         protected override void OnStart(string[] args)
         {            
-            appDataPath = Environment.GetEnvironmentVariable("APPDATA");
+            appDataPath = Environment.GetEnvironmentVariable(APP_DATA);
             CreateRepositoryRoot();
-            userProfileDocumentsPath = Environment.GetEnvironmentVariable("USERPROFILE") + "\\Documents";
+            userProfileDocumentsPath = Environment.GetEnvironmentVariable(USER_PROFILE) + "\\" + DOCUMENTS_FOLDER_NAME;
             definedWatchersList = new List<FileSystemWatcher>();
 
             LogEvent("Targeting Repo folder " + appDataPath);
-            LogEvent("Listening for DOCX Changes in " + userProfileDocumentsPath);
+            LogEvent("Listening for file changes in " + userProfileDocumentsPath);
 
             CreateWatcher("*.docx");
             CreateWatcher("*.pptx");
@@ -45,22 +50,22 @@ namespace Arxhivista
         private void OnCreated(object sender, FileSystemEventArgs e)
         {
             LogEvent("Create " + e.FullPath);
-            if (e.FullPath.EndsWith(".docx") || e.FullPath.EndsWith(".pptx") || e.FullPath.EndsWith(".xlsx"))
-            {
-                CreateOfficeDocumentRepository(e.Name);
-                CopyDocumentContentToRepository(e.FullPath, e.Name);
-                UpdateGitRepository(e.Name);
-            }
+            HandleRelevantFileSystemEvent(e.FullPath, e.Name);
         }
 
         private void OnRenamed(object sender, RenamedEventArgs e)
         {
             LogEvent("Rename " + e.FullPath + " " + e.OldName);
-            if (e.FullPath.EndsWith(".docx") || e.FullPath.EndsWith(".pptx") || e.FullPath.EndsWith(".xlsx"))
+            HandleRelevantFileSystemEvent(e.FullPath, e.Name);
+        }
+
+        private void HandleRelevantFileSystemEvent(string fullPath, string name)
+        {
+            if ((name.EndsWith(DOCX_EXTENSION) || name.EndsWith(PPTX_EXTENSION) || name.EndsWith(XLSX_EXTENSION)) && !name.Contains(OFFICE_TEMP_PREFIX))
             {
-                CreateOfficeDocumentRepository(e.Name);
-                CopyDocumentContentToRepository(e.FullPath, e.Name);
-                UpdateGitRepository(e.Name);
+                CreateOfficeDocumentRepository(name);
+                CopyDocumentContentToRepository(fullPath, name);
+                UpdateGitRepository(name);
             }
         }
 
@@ -78,7 +83,7 @@ namespace Arxhivista
 
         private void LogEvent(string message)
         {
-            string eventSource = "Arxhivista Monitor Service";
+            string eventSource = SERVICE_NAME + " Monitoring Service";
             DateTime dt = new DateTime();
             dt = System.DateTime.UtcNow;
             message = dt.ToLocalTime() + ": " + message;
@@ -88,7 +93,7 @@ namespace Arxhivista
 
         private void CreateRepositoryRoot()
         {
-            string repositoryPath = appDataPath + "\\Arxhivista";
+            string repositoryPath = appDataPath + "\\" + SERVICE_NAME;
             if (!Directory.Exists(repositoryPath))
             {
                 Directory.CreateDirectory(repositoryPath);
@@ -97,16 +102,16 @@ namespace Arxhivista
 
         private void UpdateGitRepository(string name)
         {
-            string archivePath = GetRepositoryRootPath() + name;
-            GitInit(archivePath);
-            GitAdd(archivePath);
-            GitCommit(archivePath);
-            GitTag(archivePath);
+            string archivePath = GetRepositoryRootPath() + name + "\\";
+            GitRepository.Init(archivePath);
+            GitRepository.Add(archivePath);
+            GitRepository.Commit(archivePath);
+            GitRepository.Tag(archivePath);
         }
 
         private string GetRepositoryRootPath()
         {
-            return appDataPath + "\\Arxhivista\\";
+            return appDataPath + "\\" + SERVICE_NAME + "\\";
         }
 
         private void CreateOfficeDocumentRepository(string name)
@@ -114,7 +119,7 @@ namespace Arxhivista
             string archivePath = GetRepositoryRootPath() + name;
             if (!Directory.Exists(archivePath))
             {
-                LogEvent("Creating Arxhivista repository for " + name + " in " + archivePath);
+                LogEvent("Creating repository for " + name + " in " + archivePath);
                 Directory.CreateDirectory(archivePath);
             }
         }
@@ -134,7 +139,13 @@ namespace Arxhivista
         private void CopyDocumentContentToRepository(string fullPath, string name)
         {
             string archivePath = GetRepositoryRootPath() + name;
-            File.Copy(fullPath, fullPath + ".arxhivista-tmp");
+            try
+            {
+                File.Copy(fullPath, fullPath + ARXHIVISTA_TEMPFILE_POSTFIX);
+            } catch (System.IO.IOException ioe)
+            {
+                LogEvent(ioe.Message);
+            }
             try
             {
                 DirectoryInfo di = new DirectoryInfo(archivePath);
@@ -153,48 +164,12 @@ namespace Arxhivista
                         dir.Delete(true);
                     }                    
                 }
-                ZipFile.ExtractToDirectory(fullPath + ".arxhivista-tmp", archivePath);                
+                ZipFile.ExtractToDirectory(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX, archivePath);                
             } catch (System.IO.IOException ioe)
             {
                 LogEvent(ioe.Message);
             }
-            File.Delete(fullPath + ".arxhivista-tmp");
-        }
-
-        private void GitInit(string repositoryPath)
-        {
-            if (!Directory.Exists(repositoryPath + "\\.git"))
-            {
-                Repository.Init(repositoryPath);
-            }
-        }
-
-        private void GitAdd(string repositoryPath)
-        {
-            using(var repo = new Repository(repositoryPath))
-            {
-                Commands.Stage(repo, "*");
-            }
-        }
-
-        private void GitCommit(string repositoryPath)
-        {
-            using (var repo = new Repository(repositoryPath))
-            {
-                Signature author = new Signature("Arxhivista", "arxhivista@home.local", DateTime.Now);
-                Signature committer = author;
-                string message = string.Format("Snapshot created on {0}", DateTime.Now.ToString("yyyy-MM-dd, HH:mm:ss"));
-                Commit commit = repo.Commit(message, author, committer);
-            }
-        }
-
-        private void GitTag(string repositoryPath)
-        {
-            using (var repo = new Repository(repositoryPath))
-            {
-                string tag = DateTime.Now.ToString("yyyyMMddHHmmss");
-                Tag t = repo.ApplyTag(tag);
-            }
+            File.Delete(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX);
         }
     }
 }
