@@ -19,6 +19,8 @@ namespace Arxhivista
         private const string OFFICE_TEMP_PREFIX = "~$";
 
         private const string ARXHIVISTA_TEMPFILE_POSTFIX = ".arxhivsta-tmp";
+        private const string ARXHIVISTA_META_FOLDER = ".arxhivista";
+        private const string GITIGNORE = ".gitignore"; 
 
         public const string SERVICE_NAME = "Arxhivista";
         protected string appDataPath;
@@ -61,11 +63,17 @@ namespace Arxhivista
 
         private void HandleRelevantFileSystemEvent(string fullPath, string name)
         {
-            if ((name.EndsWith(DOCX_EXTENSION) || name.EndsWith(PPTX_EXTENSION) || name.EndsWith(XLSX_EXTENSION)) && !name.Contains(OFFICE_TEMP_PREFIX))
+            try
             {
-                CreateOfficeDocumentRepository(name);
-                CopyDocumentContentToRepository(fullPath, name);
-                UpdateGitRepository(name);
+                if ((name.EndsWith(DOCX_EXTENSION) || name.EndsWith(PPTX_EXTENSION) || name.EndsWith(XLSX_EXTENSION)) && !name.Contains(OFFICE_TEMP_PREFIX))
+                {
+                    CreateOfficeDocumentRepository(name);
+                    CopyDocumentContentToRepository(fullPath, name);
+                    UpdateGitRepository(name);
+                }
+            } catch (Exception e)
+            {
+                LogEvent("HRFSE: " + e.Message);
             }
         }
 
@@ -93,20 +101,32 @@ namespace Arxhivista
 
         private void CreateRepositoryRoot()
         {
-            string repositoryPath = appDataPath + "\\" + SERVICE_NAME;
-            if (!Directory.Exists(repositoryPath))
+            try
             {
-                Directory.CreateDirectory(repositoryPath);
+                string repositoryPath = appDataPath + "\\" + SERVICE_NAME;
+                if (!Directory.Exists(repositoryPath))
+                {
+                    Directory.CreateDirectory(repositoryPath);
+                }
+            } catch (Exception e)
+            {
+                LogEvent("CRR: " + e.Message);
             }
         }
 
         private void UpdateGitRepository(string name)
         {
             string archivePath = GetRepositoryRootPath() + name + "\\";
-            GitRepository.Init(archivePath);
-            GitRepository.Add(archivePath);
-            GitRepository.Commit(archivePath);
-            GitRepository.Tag(archivePath);
+            try
+            {
+                GitRepository.Init(archivePath);
+                GitRepository.Add(archivePath);
+                GitRepository.Commit(archivePath);
+                GitRepository.Tag(archivePath);
+            } catch (Exception e)
+            {
+                LogEvent("UGR: " + e.Message);
+            }
         }
 
         private string GetRepositoryRootPath()
@@ -116,12 +136,30 @@ namespace Arxhivista
 
         private void CreateOfficeDocumentRepository(string name)
         {
-            string archivePath = GetRepositoryRootPath() + name;
-            if (!Directory.Exists(archivePath))
+            try
             {
-                LogEvent("Creating repository for " + name + " in " + archivePath);
-                Directory.CreateDirectory(archivePath);
+                string archivePath = GetRepositoryRootPath() + name;
+                if (!Directory.Exists(archivePath))
+                {
+                    LogEvent("Creating repository for " + name + " in " + archivePath);
+                    Directory.CreateDirectory(archivePath);
+                }
+
+                string arxhivistaMetaPath = archivePath + "\\" + ARXHIVISTA_META_FOLDER;
+                if (!Directory.Exists(arxhivistaMetaPath))
+                {
+                    Directory.CreateDirectory(arxhivistaMetaPath);
+                    CreateGitignore(archivePath);
+                }
+            } catch (Exception e)
+            {
+                LogEvent("CODR: " + e.Message);
             }
+        }
+
+        private void CreateGitignore(string archivePath)
+        {
+            File.WriteAllText(archivePath + "\\" + GITIGNORE, ARXHIVISTA_META_FOLDER + "/");
         }
 
         private void CreateWatcher(string filter)
@@ -139,15 +177,10 @@ namespace Arxhivista
         private void CopyDocumentContentToRepository(string fullPath, string name)
         {
             string archivePath = GetRepositoryRootPath() + name;
+            
             try
             {
                 File.Copy(fullPath, fullPath + ARXHIVISTA_TEMPFILE_POSTFIX);
-            } catch (System.IO.IOException ioe)
-            {
-                LogEvent(ioe.Message);
-            }
-            try
-            {
                 DirectoryInfo di = new DirectoryInfo(archivePath);
 
                 foreach (FileInfo file in di.GetFiles())
@@ -164,12 +197,12 @@ namespace Arxhivista
                         dir.Delete(true);
                     }                    
                 }
-                ZipFile.ExtractToDirectory(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX, archivePath);                
+                ZipFile.ExtractToDirectory(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX, archivePath);
+                File.Delete(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX);
             } catch (System.IO.IOException ioe)
             {
-                LogEvent(ioe.Message);
-            }
-            File.Delete(fullPath + ARXHIVISTA_TEMPFILE_POSTFIX);
+                LogEvent("CDCTR: " + ioe.Message);
+            }            
         }
     }
 }
